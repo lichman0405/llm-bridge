@@ -5,12 +5,12 @@
 # Date: 2025-07-14
 # Version: 0.1.0
 
-
 import json
 import os
+import uuid
 from fastapi import APIRouter, HTTPException, Request as FastAPIRequest
-from fastapi.responses import StreamingResponse
-from typing import AsyncGenerator, Union, List
+from fastapi.responses import StreamingResponse, JSONResponse
+from typing import AsyncGenerator, Union, List, Dict, Any
 
 from app.core.schemas import (
     StandardizedChatRequest,
@@ -43,7 +43,6 @@ def _transform_anthropic_to_standard(
     anthropic_request: AnthropicChatRequest,
 ) -> StandardizedChatRequest:
     """Transforms a complex Anthropic request to our internal standard format."""
-
     default_model_override = os.getenv("DEFAULT_MODEL_OVERRIDE")
     final_model_name = (
         default_model_override
@@ -91,7 +90,7 @@ async def _openai_to_anthropic_stream_translator(
             break
 
         try:
-            data = json.loads(chunk_str[6:])  # Remove "data: " prefix
+            data = json.loads(chunk_str[6:])
             delta = data.get("choices", [{}])[0].get("delta", {})
             content = delta.get("content")
 
@@ -107,26 +106,42 @@ async def _openai_to_anthropic_stream_translator(
             console.warning(f"Could not decode stream chunk: {chunk_str}")
             continue
 
+def _openai_to_anthropic_response_translator(
+    openai_response: Dict[str, Any]
+) -> Dict[str, Any]:
+    """(New) Translates a single OpenAI JSON response to Anthropic's format."""
+    final_content = openai_response.get("choices", [{}])[0].get("message", {}).get("content", "")
+    
+    return {
+        "id": f"msg-proxy-{uuid.uuid4()}",
+        "type": "message",
+        "role": "assistant",
+        "model": openai_response.get("model", "proxied-model"),
+        "content": [{"type": "text", "text": final_content}],
+        "stop_reason": "end_turn",
+        "usage": openai_response.get("usage", {"prompt_tokens": 0, "completion_tokens": 0}),
+    }
+
 
 @router.post("/v1/messages", response_model=None)
-async def anthropic_proxy(request: AnthropicChatRequest) -> StreamingResponse:
+async def anthropic_proxy(request: AnthropicChatRequest) -> Union[StreamingResponse, JSONResponse]:
     try:
         console.info(f"Anthropic proxy received request for original model: {request.model}")
 
         standard_request = _transform_anthropic_to_standard(request)
         adapter = get_adapter(model_name=standard_request.model)
 
-        response_stream = await adapter.chat_completions(standard_request)
+        # This call now correctly returns either a stream or a dict
+        response_data = await adapter.chat_completions(standard_request)
 
-        if not standard_request.stream:
-            raise HTTPException(
-                status_code=501,
-                detail="Non-streaming not implemented for Anthropic proxy.",
-            )
-
-        anthropic_stream = _openai_to_anthropic_stream_translator(response_stream)
-
-        return StreamingResponse(anthropic_stream, media_type="text/event-stream")
+        # Handle both streaming and non-streaming cases
+        if standard_request.stream:
+            anthropic_stream = _openai_to_anthropic_stream_translator(response_data)
+            return StreamingResponse(anthropic_stream, media_type="text/event-stream")
+        else:
+            # New logic to handle the non-streaming case
+            translated_response = _openai_to_anthropic_response_translator(response_data)
+            return JSONResponse(content=translated_response)
 
     except ValueError as e:
         console.error(f"Anthropic proxy validation error: {e}")
