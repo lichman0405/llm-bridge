@@ -24,7 +24,8 @@ class OpenAICompatibleAdapter(BaseAdapter):
         request: StandardizedChatRequest,
     ) -> Union[Dict[str, Any], AsyncGenerator[bytes, None]]:
         """
-        Forwards the chat completion request to an OpenAI-compatible API.
+        Forwards the chat completion request to an OpenAI-compatible API,
+        correctly handling both streaming and non-streaming responses.
         """
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -38,28 +39,29 @@ class OpenAICompatibleAdapter(BaseAdapter):
         }
         
         timeout_config = httpx.Timeout(300.0, connect=60.0)
+        api_url = f"{self.base_url}/chat/completions"
 
         async with httpx.AsyncClient(timeout=timeout_config) as client:
-            api_url = f"{self.base_url}/chat/completions"
-            
             try:
-                async with client.stream("POST", api_url, headers=headers, json=payload) as response:
-                    response.raise_for_status()
-
-                    async def generator():
-                        try:
+                if request.stream:
+                    async with client.stream("POST", api_url, headers=headers, json=payload) as response:
+                        response.raise_for_status()
+                        
+                        async def generator():
                             async for chunk in response.aiter_bytes():
                                 yield chunk
-                        except httpx.ReadError as e:
-                            console.error(f"A network read error occurred while streaming the response: {e}")
-                    
-                    return generator()
-
+                        
+                        return generator()
+                else:
+                    response = await client.post(api_url, headers=headers, json=payload)
+                    response.raise_for_status()
+                    return response.json()
+            
             except httpx.HTTPStatusError as e:
-                # This will catch non-2xx status codes after the headers are received.
+                error_body = b""
                 try:
                     error_body = await e.response.aread()
                     console.error(f"Downstream API error ({e.response.status_code}): {error_body.decode()}")
                 except Exception:
-                    console.error(f"Downstream API error ({e.response.status_code}) with no readable body.")
-                raise 
+                     console.error(f"Downstream API error ({e.response.status_code}) with unreadable body.")
+                raise
