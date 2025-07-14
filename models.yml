@@ -1,0 +1,41 @@
+# models.yml
+# This file defines all supported models and their configurations.
+# It acts as the central directory for the application's model routing.
+
+# --- OpenAI ---
+# Official OpenAI models.
+gpt-4o:
+  adapter: OpenAICompatibleAdapter
+  api_key_name: OPENAI_API_KEY
+  base_url_name: OPENAI_BASE_URL
+gpt-4-turbo:
+  adapter: OpenAICompatibleAdapter
+  api_key_name: OPENAI_API_KEY
+  base_url_name: OPENAI_BASE_URL
+gpt-o3:
+  adapter: OpenAICompatibleAdapter
+  api_key_name: OPENAI_API_KEY
+  base_url_name: OPENAI_BASE_URL
+
+
+deepseek-chat:
+  adapter: OpenAICompatibleAdapter
+  api_key_name: DEEPSEEK_API_KEY
+  base_url_name: DEEPSEEK_BASE_URL
+deepseek-reasoner:
+  adapter: OpenAICompatibleAdapter
+  api_key_name: DEEPSEEK_API_KEY
+  base_url_name: DEEPSEEK_BASE_URL
+
+
+# --- Ollama (Local Self-Hosted) ---
+# For running models on your own machine. API is OpenAI-compatible.
+# The model name is whatever you used with `ollama pull`.
+llama3: # Example
+  adapter: OpenAICompatibleAdapter
+  api_key_name: OLLAMA_API_KEY
+  base_url_name: OLLAMA_BASE_URL
+qwen:2: # Example
+  adapter: OpenAICompatibleAdapter
+  api_key_name: OLLAMA_API_KEY
+  base_url_name: OLLAMA_BASE_URL
