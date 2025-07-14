@@ -10,6 +10,7 @@ from typing import AsyncGenerator, Any, Dict, Union
 
 from app.adapters.base import BaseAdapter
 from app.core.schemas import StandardizedChatRequest
+from app.core.logger import console
 
 
 class OpenAICompatibleAdapter(BaseAdapter):
@@ -31,16 +32,13 @@ class OpenAICompatibleAdapter(BaseAdapter):
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
-        
+
         payload = {
             "model": request.model,
             "messages": [msg.dict(exclude_none=True) for msg in request.messages],
             "stream": request.stream,
         }
-        if request.temperature is not None:
-            payload["temperature"] = request.temperature
-        if request.max_tokens is not None:
-            payload["max_tokens"] = request.max_tokens
+
 
         async with httpx.AsyncClient() as client:
             api_url = f"{self.base_url}/chat/completions"
@@ -53,10 +51,15 @@ class OpenAICompatibleAdapter(BaseAdapter):
             )
 
             response = await client.send(req, stream=request.stream)
+            
+            # 增加更详细的错误日志，方便未来调试
+            if response.status_code != 200:
+                error_body = await response.aread()
+                console.error(f"Downstream API error ({response.status_code}): {error_body.decode()}")
+            
             response.raise_for_status()
 
             if request.stream:
-                # Directly return the async generator from httpx.
                 return response.aiter_bytes()
             else:
                 return response.json()
