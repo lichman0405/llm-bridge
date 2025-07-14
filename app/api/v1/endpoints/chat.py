@@ -8,7 +8,7 @@
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
-from typing import Union, Dict, Any
+from typing import Union
 
 from app.core.schemas import StandardizedChatRequest
 from app.services.model_manager import get_adapter
@@ -16,34 +16,22 @@ from app.core.logger import console
 
 router = APIRouter()
 
-
 @router.post("/chat/completions", response_model=None)
-async def chat_completions(request: StandardizedChatRequest) -> Union[Dict[str, Any], StreamingResponse]:
+async def chat_completions(request: StandardizedChatRequest) -> Union[dict, StreamingResponse]:
     """
-    Main endpoint for handling chat completion requests.
-
-    It orchestrates the process:
-    1. Logs the incoming request.
-    2. Selects the appropriate adapter based on the model name.
-    3. Calls the adapter to process the request to the downstream LLM API.
-    4. Returns either a streaming or a standard JSON response.
-    5. Handles potential errors gracefully.
+    Handles standard OpenAI-compatible chat completion requests.
     """
     try:
         console.info(f"Received chat completion request for model: {request.model}")
 
         adapter = get_adapter(model_name=request.model)
-
         response = await adapter.chat_completions(request)
 
         if request.stream:
             return StreamingResponse(response, media_type="text/event-stream")
         else:
-            if isinstance(response, dict):
-                console.success(f"Successfully returned non-streaming response for model: {request.model}")
-                return response
-            else:
-                raise ValueError("Adapter returned unexpected response type for non-streaming request")
+            console.success(f"Successfully returned non-streaming response for model: {request.model}")
+            return response
 
     except ValueError as e:
         console.error(f"Validation Error: {e}")

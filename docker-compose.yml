@@ -1,14 +1,19 @@
-
-version: '3.8'
+# docker-compose.yml
 
 services:
   llm-bridge:
     build:
       context: .
       dockerfile: Dockerfile
+    
     container_name: llm-bridge-service
 
     env_file:
       - .env
+
+    environment:
+
+      - DEFAULT_MODEL_OVERRIDE=deepseek-chat
+
     ports:
       - "3456:3456"

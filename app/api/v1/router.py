@@ -7,8 +7,12 @@
 # Version: 0.1.0
 
 from fastapi import APIRouter
-from app.api.v1.endpoints import chat, proxy
+from app.api.v1.endpoints import chat, anthropic_proxy
 
 api_router = APIRouter()
-api_router.include_router(chat.router, tags=["Chat"])
-api_router.include_router(proxy.router, tags=["Client Proxies"])
+
+# Standard OpenAI-compatible endpoint
+api_router.include_router(chat.router, tags=["Chat (OpenAI Standard)"])
+
+# Proxy endpoint for Anthropic-compatible clients
+api_router.include_router(anthropic_proxy.router, prefix="/anthropic", tags=["Proxy (Anthropic)"])

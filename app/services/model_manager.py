@@ -5,6 +5,7 @@
 # date: 2025-07-14
 # Version 0.1.0
 
+
 import yaml
 import os
 from pathlib import Path
@@ -12,27 +13,27 @@ from functools import lru_cache
 from typing import Dict, Type, Any
 
 from dotenv import load_dotenv
+
 from app.adapters.base import BaseAdapter
 from app.adapters.openai_compatible import OpenAICompatibleAdapter
+# from app.adapters.anthropic_adapter import AnthropicAdapter
 
 ADAPTER_CLASS_MAP = {
     "OpenAICompatibleAdapter": OpenAICompatibleAdapter,
+    # "AnthropicAdapter": AnthropicAdapter,
 }
-
 
 def load_all_configs():
     """
     Loads all configurations from both .env and models.yml.
-    This function is the single source of truth for all configurations.
     """
-    project_dotenv = Path(__file__).parent.parent.parent / ".env"
+    project_dotenv = Path(".env")
     if project_dotenv.exists():
         load_dotenv(dotenv_path=project_dotenv)
     else:
         print("Warning: .env file not found. Relying on system environment variables.")
 
-    # Load model structure from models.yml
-    config_path = Path(__file__).parent.parent.parent / "models.yml"
+    config_path = Path("models.yml")
     if not config_path.exists():
         raise RuntimeError("CRITICAL: Configuration file 'models.yml' not found.")
     
@@ -51,8 +52,7 @@ MODEL_CONFIGS = load_all_configs()
 @lru_cache(maxsize=128)
 def get_adapter(model_name: str) -> BaseAdapter:
     """
-    Factory for adapter instances, driven entirely by external configuration files.
-    This function's logic is now completely generic.
+    Factory for adapter instances, driven by the external models.yml configuration.
     """
     config = MODEL_CONFIGS.get(model_name)
     if not config:

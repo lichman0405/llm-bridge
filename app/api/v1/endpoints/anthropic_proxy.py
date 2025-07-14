@@ -1,0 +1,102 @@
+# app/api/v1/endpoints/anthropic_proxy.py
+# This module defines the proxy endpoint for handling requests to the Anthropic API.
+# It transforms incoming requests to the standardized format and manages streaming responses.
+# Author: Shibo Li
+# Date: 2025-07-14
+# Version: 0.1.0
+
+# app/api/v1/endpoints/anthropic_proxy.py
+
+import json
+import os # <--- 新增此导入，用于读取环境变量
+from fastapi import APIRouter, HTTPException, Request as FastAPIRequest
+from fastapi.responses import StreamingResponse
+from typing import AsyncGenerator
+
+from app.core.schemas import StandardizedChatRequest, ChatMessage, AnthropicChatRequest
+from app.services.model_manager import get_adapter
+from app.core.logger import console
+
+router = APIRouter()
+
+def _transform_anthropic_to_standard(
+    anthropic_request: AnthropicChatRequest
+) -> StandardizedChatRequest:
+    """Transforms an Anthropic API request to our internal standard format."""
+
+    default_model_override = os.getenv("DEFAULT_MODEL_OVERRIDE")
+    final_model_name = default_model_override if default_model_override else anthropic_request.model
+    
+    if default_model_override:
+        console.info(f"Model override active:'{anthropic_request.model}' -> '{final_model_name}'")
+
+
+    standard_messages = []
+    if anthropic_request.system:
+        standard_messages.append(ChatMessage(role="system", content=anthropic_request.system))
+
+    for msg in anthropic_request.messages:
+        standard_messages.append(ChatMessage(role=msg.role, content=msg.content))
+
+    return StandardizedChatRequest(
+        model=final_model_name,
+        messages=standard_messages,
+        stream=anthropic_request.stream,
+        temperature=anthropic_request.temperature,
+        top_p=anthropic_request.top_p,
+        max_tokens=anthropic_request.max_tokens,
+    )
+
+async def _openai_to_anthropic_stream_translator(
+    openai_stream: AsyncGenerator[bytes, None]
+) -> AsyncGenerator[str, None]:
+    """Translates an OpenAI SSE stream to an Anthropic SSE stream."""
+    async for chunk in openai_stream:
+        chunk_str = chunk.decode('utf-8').strip()
+        if not chunk_str:
+            continue
+        
+        if chunk_str == 'data: [DONE]':
+            yield 'event: message_stop\ndata: {"type": "message_stop"}\n\n'
+            break
+
+        try:
+            data = json.loads(chunk_str[6:]) # Remove "data: " prefix
+            delta = data.get("choices", [{}])[0].get("delta", {})
+            content = delta.get("content")
+
+            if content:
+                response_data = {
+                    "type": "content_block_delta",
+                    "index": 0,
+                    "delta": {"type": "text_delta", "text": content}
+                }
+                yield f'event: content_block_delta\ndata: {json.dumps(response_data)}\n\n'
+
+        except json.JSONDecodeError:
+            console.warning(f"Could not decode stream chunk: {chunk_str}")
+            continue
+
+@router.post("/v1/messages", response_model=None)
+async def anthropic_proxy(request: AnthropicChatRequest) -> StreamingResponse:
+    try:
+        console.info(f"Anthropic proxy received request for original model: {request.model}")
+
+        standard_request = _transform_anthropic_to_standard(request)
+        adapter = get_adapter(model_name=standard_request.model)
+        
+        response_stream = await adapter.chat_completions(standard_request)
+
+        if not standard_request.stream:
+            raise HTTPException(status_code=501, detail="Non-streaming not implemented for Anthropic proxy.")
+
+        anthropic_stream = _openai_to_anthropic_stream_translator(response_stream)
+        
+        return StreamingResponse(anthropic_stream, media_type="text/event-stream")
+
+    except ValueError as e:
+        console.error(f"Anthropic proxy validation error: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        console.exception(f"Unexpected Anthropic proxy error: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error.")
