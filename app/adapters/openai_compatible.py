@@ -5,9 +5,10 @@
 # date: 2025-07-14
 # Version 0.1.0
 
-import httpx
-from typing import AsyncGenerator, Any, Dict, Union
 
+import httpx
+import json
+from typing import AsyncGenerator, Any, Dict, Union
 from app.adapters.base import BaseAdapter
 from app.core.schemas import StandardizedChatRequest
 from app.core.logger import console
@@ -19,23 +20,6 @@ class OpenAICompatibleAdapter(BaseAdapter):
 
     def __init__(self, api_key: str, base_url: str):
         super().__init__(api_key, base_url)
-
-    async def _stream_response_generator(
-        self, response: httpx.Response
-    ) -> AsyncGenerator[bytes, None]:
-        """A robust generator to stream the response and handle network errors."""
-        try:
-            async for chunk in response.aiter_bytes():
-                yield chunk
-        except httpx.ReadError as e:
-            console.error(f"A network read error occurred while streaming the response: {e}")
-            # This error is often due to the remote server closing the connection.
-            # We can log it but stop yielding chunks gracefully.
-        except Exception as e:
-            console.error(f"An unexpected error occurred during streaming: {e}")
-        finally:
-            # Ensure the response is always closed.
-            await response.aclose()
 
     async def chat_completions(
         self,
@@ -54,27 +38,29 @@ class OpenAICompatibleAdapter(BaseAdapter):
             "messages": [msg.dict(exclude_none=True) for msg in request.messages],
             "stream": request.stream,
         }
+        timeout_config = httpx.Timeout(300.0, connect=60.0, read=300.0)
 
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=timeout_config) as client:
             api_url = f"{self.base_url}/chat/completions"
-            req = client.build_request(
-                "POST",
-                api_url,
-                headers=headers,
-                json=payload,
-                timeout=300
-            )
-
-            response = await client.send(req, stream=request.stream)
             
-            if response.status_code != 200:
-                error_body = await response.aread()
-                console.error(f"Downstream API error ({response.status_code}): {error_body.decode()}")
-            
-            response.raise_for_status()
+            try:
+                async with client.stream("POST", api_url, headers=headers, json=payload) as response:
 
-            if request.stream:
-                # Use our new robust generator to handle the stream.
-                return self._stream_response_generator(response)
-            else:
-                return response.json()
+                    response.raise_for_status()
+
+                    if request.stream:
+                        async def stream_generator():
+                            try:
+                                async for chunk in response.aiter_bytes():
+                                    yield chunk
+                            except httpx.ReadError as e:
+                                console.error(f"Network read error during streaming: {e}")
+                        return stream_generator()
+                    else:
+                        response_data = await response.aread()
+                        return json.loads(response_data.decode())
+
+            except httpx.HTTPStatusError as e:
+                error_body = await e.response.aread()
+                console.error(f"Downstream API error ({e.response.status_code}): {error_body.decode()}")
+                raise
