@@ -5,9 +5,7 @@
 # date: 2025-07-14
 # Version 0.1.0
 
-
 import httpx
-import json
 from typing import AsyncGenerator, Any, Dict, Union
 from app.adapters.base import BaseAdapter
 from app.core.schemas import StandardizedChatRequest
@@ -38,29 +36,30 @@ class OpenAICompatibleAdapter(BaseAdapter):
             "messages": [msg.dict(exclude_none=True) for msg in request.messages],
             "stream": request.stream,
         }
-        timeout_config = httpx.Timeout(300.0, connect=60.0, read=300.0)
+        
+        timeout_config = httpx.Timeout(300.0, connect=60.0)
 
         async with httpx.AsyncClient(timeout=timeout_config) as client:
             api_url = f"{self.base_url}/chat/completions"
             
             try:
                 async with client.stream("POST", api_url, headers=headers, json=payload) as response:
-
                     response.raise_for_status()
 
-                    if request.stream:
-                        async def stream_generator():
-                            try:
-                                async for chunk in response.aiter_bytes():
-                                    yield chunk
-                            except httpx.ReadError as e:
-                                console.error(f"Network read error during streaming: {e}")
-                        return stream_generator()
-                    else:
-                        response_data = await response.aread()
-                        return json.loads(response_data.decode())
+                    async def generator():
+                        try:
+                            async for chunk in response.aiter_bytes():
+                                yield chunk
+                        except httpx.ReadError as e:
+                            console.error(f"A network read error occurred while streaming the response: {e}")
+                    
+                    return generator()
 
             except httpx.HTTPStatusError as e:
-                error_body = await e.response.aread()
-                console.error(f"Downstream API error ({e.response.status_code}): {error_body.decode()}")
-                raise
+                # This will catch non-2xx status codes after the headers are received.
+                try:
+                    error_body = await e.response.aread()
+                    console.error(f"Downstream API error ({e.response.status_code}): {error_body.decode()}")
+                except Exception:
+                    console.error(f"Downstream API error ({e.response.status_code}) with no readable body.")
+                raise 
