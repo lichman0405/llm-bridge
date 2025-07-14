@@ -43,20 +43,25 @@ class StandardizedChatRequest(BaseModel):
 
 
 # --- Anthropic API Specific Schemas ---
+class AnthropicContentBlock(BaseModel):
+    """Models one block of content from Anthropic's rich content format."""
+    type: str
+    text: Optional[str] = None
 
 class AnthropicMessage(BaseModel):
-    model_config = ConfigDict(extra='ignore')
-
+    """Upgraded to handle complex, multi-part content."""
     role: Literal["user", "assistant"]
-    content: str
+    content: Union[str, List[AnthropicContentBlock]]
 
 class AnthropicChatRequest(BaseModel):
-    model_config = ConfigDict(extra='ignore')
-
+    """Upgraded to handle complex system prompt and messages."""
     model: str
     messages: List[AnthropicMessage]
-    system: Optional[str] = None
+    system: Optional[Union[str, List[AnthropicContentBlock]]] = None
     max_tokens: int
     stream: bool = False
     temperature: Optional[float] = None
     top_p: Optional[float] = None
+
+    class Config:
+        extra = "ignore"
