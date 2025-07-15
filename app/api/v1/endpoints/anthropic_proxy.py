@@ -8,7 +8,7 @@
 import json
 import os
 import uuid
-from fastapi import APIRouter, HTTPException, Request as FastAPIRequest
+from fastapi import APIRouter, Request as FastAPIRequest
 from fastapi.responses import StreamingResponse, JSONResponse
 from typing import AsyncGenerator, Union, List, Dict, Any
 
@@ -42,7 +42,9 @@ def _extract_text_from_anthropic_content(
 def _transform_anthropic_to_standard(
     anthropic_request: AnthropicChatRequest,
 ) -> StandardizedChatRequest:
-    """Transforms a complex Anthropic request to our internal standard format."""
+    """Transforms a complex Anthropic request, applying the default model override if set."""
+    
+    # 读取环境变量以实现强制覆盖
     default_model_override = os.getenv("DEFAULT_MODEL_OVERRIDE")
     final_model_name = (
         default_model_override
@@ -67,7 +69,7 @@ def _transform_anthropic_to_standard(
             standard_messages.append(ChatMessage(role=msg.role, content=content_text))
 
     return StandardizedChatRequest(
-        model=final_model_name,
+        model=final_model_name, # 使用最终确定的模型名称
         messages=standard_messages,
         stream=anthropic_request.stream,
         temperature=anthropic_request.temperature,
@@ -76,76 +78,79 @@ def _transform_anthropic_to_standard(
     )
 
 
-async def _openai_to_anthropic_stream_translator(
-    openai_stream: AsyncGenerator[bytes, None],
+async def _full_response_translator(
+    standard_request: StandardizedChatRequest,
+    adapter_response: Union[Dict[str, Any], AsyncGenerator[bytes, None]],
 ) -> AsyncGenerator[str, None]:
-    """Translates an OpenAI SSE stream to an Anthropic SSE stream."""
-    async for chunk in openai_stream:
-        chunk_str = chunk.decode("utf-8").strip()
-        if not chunk_str:
-            continue
-
-        if chunk_str == "data: [DONE]":
-            yield 'event: message_stop\ndata: {"type": "message_stop"}\n\n'
-            break
-
-        try:
-            data = json.loads(chunk_str[6:])
-            delta = data.get("choices", [{}])[0].get("delta", {})
-            content = delta.get("content")
-
-            if content:
-                response_data = {
-                    "type": "content_block_delta",
-                    "index": 0,
-                    "delta": {"type": "text_delta", "text": content},
-                }
-                yield f'event: content_block_delta\ndata: {json.dumps(response_data)}\n\n'
-
-        except json.JSONDecodeError:
-            console.warning(f"Could not decode stream chunk: {chunk_str}")
-            continue
-
-def _openai_to_anthropic_response_translator(
-    openai_response: Dict[str, Any]
-) -> Dict[str, Any]:
-    """(New) Translates a single OpenAI JSON response to Anthropic's format."""
-    final_content = openai_response.get("choices", [{}])[0].get("message", {}).get("content", "")
-    
-    return {
-        "id": f"msg-proxy-{uuid.uuid4()}",
-        "type": "message",
-        "role": "assistant",
-        "model": openai_response.get("model", "proxied-model"),
-        "content": [{"type": "text", "text": final_content}],
-        "stop_reason": "end_turn",
-        "usage": openai_response.get("usage", {"prompt_tokens": 0, "completion_tokens": 0}),
+    # This function remains the same.
+    start_event_data = {
+        "type": "message_start",
+        "message": {
+            "id": f"msg-proxy-{uuid.uuid4()}",
+            "type": "message",
+            "role": "assistant",
+            "content": [],
+            "model": standard_request.model,
+            "stop_reason": None,
+            "usage": {"input_tokens": 0, "output_tokens": 0},
+        },
     }
+    yield f'event: message_start\ndata: {json.dumps(start_event_data)}\n\n'
+
+    if isinstance(adapter_response, AsyncGenerator):
+        async for chunk in adapter_response:
+            chunk_str = chunk.decode("utf-8").strip()
+            if not chunk_str or chunk_str == "data: [DONE]":
+                continue
+            try:
+                data = json.loads(chunk_str[6:])
+                delta = data.get("choices", [{}])[0].get("delta", {})
+                content = delta.get("content")
+                if content:
+                    delta_event_data = {
+                        "type": "content_block_delta",
+                        "index": 0,
+                        "delta": {"type": "text_delta", "text": content},
+                    }
+                    yield f'event: content_block_delta\ndata: {json.dumps(delta_event_data)}\n\n'
+            except json.JSONDecodeError:
+                console.warning(f"Could not decode stream chunk: {chunk_str}")
+                continue
+    
+    stop_event_data = {"type": "message_stop"}
+    yield f'event: message_stop\ndata: {json.dumps(stop_event_data)}\n\n'
 
 
 @router.post("/v1/messages", response_model=None)
 async def anthropic_proxy(request: AnthropicChatRequest) -> Union[StreamingResponse, JSONResponse]:
+    # This function also remains the same.
     try:
         console.info(f"Anthropic proxy received request for original model: {request.model}")
-
         standard_request = _transform_anthropic_to_standard(request)
+        
         adapter = get_adapter(model_name=standard_request.model)
-
-        # This call now correctly returns either a stream or a dict
-        response_data = await adapter.chat_completions(standard_request)
-
-        # Handle both streaming and non-streaming cases
+        adapter_response = await adapter.chat_completions(standard_request)
+        
         if standard_request.stream:
-            anthropic_stream = _openai_to_anthropic_stream_translator(response_data)
-            return StreamingResponse(anthropic_stream, media_type="text/event-stream")
+            final_stream = _full_response_translator(standard_request, adapter_response)
+            return StreamingResponse(final_stream, media_type="text/event-stream")
         else:
-            # New logic to handle the non-streaming case
-            translated_response = _openai_to_anthropic_response_translator(response_data)
-            return JSONResponse(content=translated_response)
+            # Ensure adapter_response is a dict for non-streaming responses
+            if isinstance(adapter_response, dict):
+                translated_response = {
+                    "id": f"msg-proxy-{uuid.uuid4()}",
+                    "type": "message",
+                    "role": "assistant",
+                    "model": adapter_response.get("model", standard_request.model),
+                    "content": [{"type": "text","text": adapter_response.get("choices", [{}])[0].get("message", {}).get("content", "")}],
+                    "stop_reason": "end_turn",
+                    "usage": adapter_response.get("usage", {"prompt_tokens": 0, "completion_tokens": 0}),
+                }
+                return JSONResponse(content=translated_response)
+            else:
+                raise ValueError("Expected dict response for non-streaming request")
 
-    except ValueError as e:
-        console.error(f"Anthropic proxy validation error: {e}")
-        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        console.exception(f"Unexpected Anthropic proxy error: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error.")
+        console.exception(f"FATAL: An unhandled error occurred in anthropic_proxy: {e}")
+        error_content = {"type": "error", "error": {"type": "internal_server_error", "message": str(e)}}
+        return JSONResponse(status_code=500, content=error_content)

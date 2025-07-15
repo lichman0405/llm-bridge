@@ -5,15 +5,13 @@
 # date: 2025-07-14
 # Version 0.1.0
 
-# app/core/schemas.py
-
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, ConfigDict
 from typing import List, Dict, Optional, Union, Literal
 
 # --- OpenAI Compatible Schemas (Internal Standard) ---
 
 class ChatMessage(BaseModel):
-    model_config = ConfigDict(extra='ignore')
+    model_config = ConfigDict(extra="ignore")
 
     role: Literal["system", "user", "assistant", "tool"]
     content: Optional[str] = None
@@ -30,7 +28,7 @@ class Tool(BaseModel):
     function: Function
 
 class StandardizedChatRequest(BaseModel):
-    model_config = ConfigDict(extra='ignore')
+    model_config = ConfigDict(extra="ignore")
 
     model: str
     messages: List[ChatMessage]
@@ -43,18 +41,21 @@ class StandardizedChatRequest(BaseModel):
 
 
 # --- Anthropic API Specific Schemas ---
+
 class AnthropicContentBlock(BaseModel):
     """Models one block of content from Anthropic's rich content format."""
     type: str
     text: Optional[str] = None
 
 class AnthropicMessage(BaseModel):
-    """Upgraded to handle complex, multi-part content."""
+    """Handles complex, multi-part content from Anthropic clients."""
     role: Literal["user", "assistant"]
     content: Union[str, List[AnthropicContentBlock]]
 
 class AnthropicChatRequest(BaseModel):
-    """Upgraded to handle complex system prompt and messages."""
+    """Handles complex requests from Anthropic clients."""
+    model_config = ConfigDict(extra="ignore")
+    
     model: str
     messages: List[AnthropicMessage]
     system: Optional[Union[str, List[AnthropicContentBlock]]] = None
@@ -62,6 +63,3 @@ class AnthropicChatRequest(BaseModel):
     stream: bool = False
     temperature: Optional[float] = None
     top_p: Optional[float] = None
-
-    class Config:
-        extra = "ignore"

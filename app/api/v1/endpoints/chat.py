@@ -6,6 +6,7 @@
 # Date: 2025-07-14
 # Version: 0.1.0
 
+
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from typing import Union
@@ -20,10 +21,14 @@ router = APIRouter()
 async def chat_completions(request: StandardizedChatRequest) -> Union[dict, StreamingResponse]:
     """
     Handles standard OpenAI-compatible chat completion requests.
+    Args:
+        request (StandardizedChatRequest): The chat completion request object.
+    Returns:
+        Union[dict, StreamingResponse]: Returns a dictionary response for non-streaming requests,
+        or a StreamingResponse for streaming requests.
     """
     try:
         console.info(f"Received chat completion request for model: {request.model}")
-
         adapter = get_adapter(model_name=request.model)
         response = await adapter.chat_completions(request)
 
@@ -31,7 +36,10 @@ async def chat_completions(request: StandardizedChatRequest) -> Union[dict, Stre
             return StreamingResponse(response, media_type="text/event-stream")
         else:
             console.success(f"Successfully returned non-streaming response for model: {request.model}")
-            return response
+            if isinstance(response, dict):
+                return response
+            else:
+                raise ValueError("Expected dict response for non-streaming request")
 
     except ValueError as e:
         console.error(f"Validation Error: {e}")

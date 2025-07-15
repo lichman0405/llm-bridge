@@ -6,6 +6,7 @@
 # date: 2025-07-14
 # Version 0.1.0
 
+
 from abc import ABC, abstractmethod
 from typing import AsyncGenerator, Any, Dict, Union
 
@@ -17,7 +18,7 @@ class BaseAdapter(ABC):
     Abstract Base Class (Interface) for all Large Language Model adapters.
     """
 
-    def __init__(self, api_key: str, base_url: str):
+    def __init__(self, api_key: str, base_url: str | None = None):
         """
         Initializes the adapter with necessary credentials and settings.
         """

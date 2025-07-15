@@ -10,22 +10,21 @@ import yaml
 import os
 from pathlib import Path
 from functools import lru_cache
-from typing import Dict, Type, Any
 
 from dotenv import load_dotenv
 
 from app.adapters.base import BaseAdapter
 from app.adapters.openai_compatible import OpenAICompatibleAdapter
-# from app.adapters.anthropic_adapter import AnthropicAdapter
 
 ADAPTER_CLASS_MAP = {
     "OpenAICompatibleAdapter": OpenAICompatibleAdapter,
-    # "AnthropicAdapter": AnthropicAdapter,
+    # Other adapters can be added here as needed
 }
 
 def load_all_configs():
     """
-    Loads all configurations from both .env and models.yml.
+    Loads all configurations from both .env and models.yml from the root
+    of the container's working directory.
     """
     project_dotenv = Path(".env")
     if project_dotenv.exists():

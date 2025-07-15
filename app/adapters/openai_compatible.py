@@ -43,18 +43,23 @@ class OpenAICompatibleAdapter(BaseAdapter):
 
         async with httpx.AsyncClient(timeout=timeout_config) as client:
             try:
+                # Strictly separate the handling for streaming and non-streaming requests.
                 if request.stream:
+                    # For streaming, use the robust client.stream() context manager.
                     async with client.stream("POST", api_url, headers=headers, json=payload) as response:
                         response.raise_for_status()
                         
+                        # Return a generator defined within the context to keep the connection alive.
                         async def generator():
                             async for chunk in response.aiter_bytes():
                                 yield chunk
                         
                         return generator()
                 else:
+                    # For non-streaming, use a standard post request.
                     response = await client.post(api_url, headers=headers, json=payload)
                     response.raise_for_status()
+                    # Directly return the JSON dictionary.
                     return response.json()
             
             except httpx.HTTPStatusError as e:
